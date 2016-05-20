@@ -341,8 +341,8 @@ class Worker(object):
         gracefully.
         """
 
-        signal.signal(signal.SIGINT, self.request_stop)
-        signal.signal(signal.SIGTERM, self.request_stop)
+        signal.signal(signal.SIGINT, self.request_force_stop)
+        signal.signal(signal.SIGTERM, self.request_force_stop)
 
     def request_force_stop(self, signum, frame):
         """Terminates the application (cold shutdown).
@@ -355,6 +355,14 @@ class Worker(object):
             self.log.debug(msg)
             try:
                 os.kill(self.horse_pid, signal.SIGKILL)
+                job = self.get_current_job()
+                if job:
+                    started_job_registry = StartedJobRegistry(job.origin, self.connection)
+                    self.log.warning('attempting to remove Job %s from registry' % job.id)
+                    job.set_status(JobStatus.FAILED)
+                    started_job_registry.remove(job)
+                    self.set_current_job_id(None)
+                    self.log.warning('no exceptions!!')
             except OSError as e:
                 # ESRCH ("No such process") is fine with us
                 if e.errno != errno.ESRCH:
