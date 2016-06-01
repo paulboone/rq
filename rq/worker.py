@@ -358,11 +358,19 @@ class Worker(object):
                 job = self.get_current_job()
                 if job:
                     started_job_registry = StartedJobRegistry(job.origin, self.connection)
-                    self.log.warning('attempting to remove Job %s from registry' % job.id)
+                    failed_queue = get_failed_queue(connection=self.connection)
+                    self.log.warning('attempting to remove Job %s from registry and move to failed queue' % job.id)
+
+                    # set status to failed
                     job.set_status(JobStatus.FAILED)
+                    job.save()
+
+                    # add to failed queue; remove from started_job_registry
+                    failed_queue.push_job_id(job.id)
                     started_job_registry.remove(job)
+
                     self.set_current_job_id(None)
-                    self.log.warning('no exceptions!!')
+                    self.log.warning('job moved succesfully %s' % job.id)
             except OSError as e:
                 # ESRCH ("No such process") is fine with us
                 if e.errno != errno.ESRCH:
