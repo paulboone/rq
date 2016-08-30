@@ -351,26 +351,27 @@ class Worker(object):
 
         # Take down the horse with the worker
         if self.horse_pid:
+            job = self.get_current_job()
+            if job:
+                self.log.warning('attempting to remove Job %s from registry and move to failed queue' % job.id)
+                self.failed_queue.quarantine(job, "Cold shutdown due to SIGTERM")
+
+                # run code comparable to what runs when an exception happens
+                # during the worker execution
+                with self.connection._pipeline() as pipeline:
+                    started_job_registry = StartedJobRegistry(job.origin, self.connection)
+                    started_job_registry.remove(job, pipeline=pipeline)
+                    job.set_status(JobStatus.FAILED, pipeline=pipeline)
+                    job.save(pipeline=pipeline)
+                    self.set_current_job_id(None, pipeline=pipeline)
+                    pipeline.execute()
+
+                self.log.warning('job moved succesfully %s' % job.id)
+
             msg = 'Taking down horse {0} with me'.format(self.horse_pid)
             self.log.debug(msg)
             try:
                 os.kill(self.horse_pid, signal.SIGKILL)
-                job = self.get_current_job()
-                if job:
-                    started_job_registry = StartedJobRegistry(job.origin, self.connection)
-                    failed_queue = get_failed_queue(connection=self.connection)
-                    self.log.warning('attempting to remove Job %s from registry and move to failed queue' % job.id)
-
-                    # set status to failed
-                    job.set_status(JobStatus.FAILED)
-                    job.save()
-
-                    # add to failed queue; remove from started_job_registry
-                    failed_queue.push_job_id(job.id)
-                    started_job_registry.remove(job)
-
-                    self.set_current_job_id(None)
-                    self.log.warning('job moved succesfully %s' % job.id)
             except OSError as e:
                 # ESRCH ("No such process") is fine with us
                 if e.errno != errno.ESRCH:
