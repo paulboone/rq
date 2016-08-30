@@ -351,6 +351,23 @@ class Worker(object):
 
         # Take down the horse with the worker
         if self.horse_pid:
+            job = self.get_current_job()
+            if job:
+                self.log.warning('attempting to remove Job %s from registry and move to failed queue' % job.id)
+                self.failed_queue.quarantine(job, "Cold shutdown due to SIGTERM")
+
+                # run code comparable to what runs when an exception happens
+                # during the worker execution
+                with self.connection._pipeline() as pipeline:
+                    started_job_registry = StartedJobRegistry(job.origin, self.connection)
+                    started_job_registry.remove(job, pipeline=pipeline)
+                    job.set_status(JobStatus.FAILED, pipeline=pipeline)
+                    job.save(pipeline=pipeline)
+                    self.set_current_job_id(None, pipeline=pipeline)
+                    pipeline.execute()
+
+                self.log.warning('job moved succesfully %s' % job.id)
+
             msg = 'Taking down horse {0} with me'.format(self.horse_pid)
             self.log.debug(msg)
             try:
@@ -586,7 +603,6 @@ class Worker(object):
             try:
                 with self.death_penalty_class(job.timeout or self.queue_class.DEFAULT_TIMEOUT):
                     rv = job.perform()
-
                 # Pickle the result in the same try-except block since we need
                 # to use the same exc handling when pickling fails
                 job._result = rv
